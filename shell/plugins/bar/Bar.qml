@@ -1122,9 +1122,22 @@ Item {
     return revision >= 0 && workspace !== null && workspace.toplevels.values.length === 0
   }
 
+  function needsTransparentForeground() {
+    if (!requestedTransparent) return false
+    if (!transparentOnlyWhenWorkspaceEmpty) return true
+
+    // The shared wallpaper color belongs to every transparent surface, not
+    // just the focused monitor. Keep it while any monitor still needs it.
+    var monitors = Hyprland.monitors.values
+    for (var i = 0; i < monitors.length; i++) {
+      if (shouldBeTransparent(monitors[i])) return true
+    }
+    return false
+  }
+
   function syncTransparency() {
     transparencyRevision++
-    if (!shouldBeTransparent(Hyprland.focusedMonitor)) {
+    if (!needsTransparentForeground()) {
       foregroundAnimationEnabled = false
       useTransparentForeground = false
       transparent = false
@@ -1135,7 +1148,7 @@ Item {
 
     // The standard transparent bar waits for wallpaper-aware text contrast;
     // workspace-conditional transparency must change as soon as a workspace clears.
-    if (transparentOnlyWhenWorkspaceEmpty) transparent = true
+    if (transparentOnlyWhenWorkspaceEmpty) transparent = shouldBeTransparent(Hyprland.focusedMonitor)
     if (!useTransparentForeground) scheduleTransparentForegroundRefresh()
   }
 
@@ -1146,7 +1159,7 @@ Item {
   }
 
   function scheduleTransparentForegroundRefresh() {
-    if (!shouldBeTransparent(Hyprland.focusedMonitor)) {
+    if (!needsTransparentForeground()) {
       transparentForeground = themeForeground
       return
     }
@@ -1154,7 +1167,7 @@ Item {
   }
 
   function refreshTransparentForeground() {
-    if (!shouldBeTransparent(Hyprland.focusedMonitor) || transparentForegroundProc.running) return
+    if (!needsTransparentForeground() || transparentForegroundProc.running) return
 
     transparentForegroundProc.command = [
       "omarchy-bar-text-color",
@@ -1194,9 +1207,9 @@ Item {
 
         root.foregroundAnimationEnabled = false
         root.transparentForeground = value
-        if (root.shouldBeTransparent(Hyprland.focusedMonitor)) {
+        if (root.needsTransparentForeground()) {
           root.useTransparentForeground = true
-          root.transparent = true
+          root.transparent = root.shouldBeTransparent(Hyprland.focusedMonitor)
         }
         root.restoreForegroundAnimation()
       }
@@ -1415,7 +1428,12 @@ Item {
     function run(command) { root.run(command) }
     function setCenterHoverRevealSuppressed(value) { root.setCenterHoverRevealSuppressed(value) }
 
-    onTransparentChanged: scheduleTransparentForegroundRefresh()
+    onTransparentChanged: {
+      scheduleTransparentForegroundRefresh()
+      // Initial Hyprland state arrives asynchronously, without a raw event.
+      // A newly transparent surface must also wake the shared sampler.
+      Qt.callLater(root.syncTransparency)
+    }
     onHyprlandMonitorChanged: scheduleTransparentForegroundRefresh()
 
     Connections {
