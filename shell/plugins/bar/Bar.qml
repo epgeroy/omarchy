@@ -58,6 +58,7 @@ Item {
   property var visibleSpecialWorkspaceNames: ({})
   property int transparencyRevision: 0
   property bool useTransparentForeground: false
+  property bool foregroundRefreshPending: false
   property bool transparent: false
   property bool centerSectionHovered: false
   // One bar surface exists per monitor and each reports into this count, so a
@@ -1138,6 +1139,8 @@ Item {
   function syncTransparency() {
     transparencyRevision++
     if (!needsTransparentForeground()) {
+      foregroundRefreshPending = false
+      transparentForegroundTimer.stop()
       foregroundAnimationEnabled = false
       useTransparentForeground = false
       transparent = false
@@ -1160,14 +1163,24 @@ Item {
 
   function scheduleTransparentForegroundRefresh() {
     if (!needsTransparentForeground()) {
+      foregroundRefreshPending = false
+      transparentForegroundTimer.stop()
       transparentForeground = themeForeground
+      return
+    }
+    if (transparentForegroundProc.running) {
+      foregroundRefreshPending = true
       return
     }
     transparentForegroundTimer.restart()
   }
 
   function refreshTransparentForeground() {
-    if (!needsTransparentForeground() || transparentForegroundProc.running) return
+    if (!needsTransparentForeground()) return
+    if (transparentForegroundProc.running) {
+      foregroundRefreshPending = true
+      return
+    }
 
     transparentForegroundProc.command = [
       "omarchy-bar-text-color",
@@ -1200,6 +1213,12 @@ Item {
 
   Process {
     id: transparentForegroundProc
+    onRunningChanged: {
+      if (!running && root.foregroundRefreshPending) {
+        root.foregroundRefreshPending = false
+        root.scheduleTransparentForegroundRefresh()
+      }
+    }
     stdout: SplitParser {
       onRead: function(line) {
         var value = String(line || "").trim()
@@ -1450,7 +1469,11 @@ Item {
       interval: 120
       repeat: false
       onTriggered: {
-        if (!root.transparentForegroundPerMonitor || !barWindow.transparent || transparentForegroundProc.running) return
+        if (!root.transparentForegroundPerMonitor || !barWindow.transparent) return
+        if (transparentForegroundProc.running) {
+          barWindow.foregroundRefreshPending = true
+          return
+        }
         if (!barWindow.hyprlandMonitor || !barWindow.screen) return
 
         transparentForegroundProc.command = [
